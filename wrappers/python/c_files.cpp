@@ -136,6 +136,22 @@ void init_c_files(py::module &m) {
     py::class_< rs2_combined_motion > combined_motion( m, "combined_motion", "IMU combined GYRO & ACCEL data" );
     combined_motion.def( py::init<>() )
         .def_property(
+            "orientation",
+            []( rs2_combined_motion const & self )
+            {
+                return py::make_tuple( self.orientation.x,
+                                       self.orientation.y,
+                                       self.orientation.z,
+                                       self.orientation.w );
+            },
+            []( rs2_combined_motion & self, py::sequence const & q )
+            {
+                self.orientation = { q[0].cast< double >(),
+                                     q[1].cast< double >(),
+                                     q[2].cast< double >(),
+                                     q[3].cast< double >() };
+            } )
+        .def_property(
             "angular_velocity",
             []( rs2_combined_motion const & self )
             {

@@ -128,6 +128,11 @@ namespace rs2
         // so for now Macs should not use the GLSL stuff
         config_file::instance().set_default(configurations::performance::glsl_for_processing, false);
         config_file::instance().set_default(configurations::performance::glsl_for_rendering, false);
+        // A config copied from another platform may have persisted these as
+        // enabled. The macOS legacy 2.1 context cannot mix that GLSL path with
+        // the viewer's fixed-function rendering.
+        config_file::instance().set(configurations::performance::glsl_for_processing, false);
+        config_file::instance().set(configurations::performance::glsl_for_rendering, false);
 #else
         auto vendor = (const char*)glGetString(GL_VENDOR);
         auto renderer = (const char*)glGetString(GL_RENDERER);
@@ -414,7 +419,13 @@ namespace rs2
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;   // added in order to prevents cursor chang when interacting with other element (when nedded remove the flag accordingly)
         ImGui_ImplGlfw_InitForOpenGL(_win, true);
+#ifdef __APPLE__
+        // GLFW provides a legacy 2.1 context here; the ImGui Apple default
+        // '#version 150' requires a 3.2 core context.
+        ImGui_ImplOpenGL3_Init("#version 120");
+#else
         ImGui_ImplOpenGL3_Init();
+#endif
 
         if (_use_glsl_render)
             _2d_vis = std::make_shared<visualizer_2d>(std::make_shared<splash_screen_shader>());

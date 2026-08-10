@@ -2425,11 +2425,17 @@ namespace rs2
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Do not attribute a sticky error from the preceding 2D/ImGui pass to
+        // the first 3D operation.
+        clear_gl_errors();
+
         glLoadIdentity();
 
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
-        gluPerspective(45, non_negative(viewer_rect.w / win.framebuf_height()), 0.001f, 100.0f);
+        const auto aspect = non_negative(viewer_rect.w)
+            / std::max(1.f, non_negative(win.framebuf_height()));
+        gluPerspective(45, aspect > 0.f ? aspect : 1.f, 0.001f, 100.0f);
         matrix4 perspective_mat;
         glGetFloatv(GL_PROJECTION_MATRIX, perspective_mat);
         glPopMatrix();

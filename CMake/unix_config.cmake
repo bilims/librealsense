@@ -117,4 +117,13 @@ macro(os_set_flags)
 endmacro()
 
 macro(os_target_config)
+    # Apple install tree is bin/ + lib/. Keep installed binaries relocatable
+    # and prevent linked build directories from leaking into INSTALL_RPATH.
+    if(APPLE)
+        set(CMAKE_BUILD_RPATH "@loader_path")
+        set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../lib")
+        set(CMAKE_MACOSX_RPATH ON)
+        set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+        set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+    endif()
 endmacro()
