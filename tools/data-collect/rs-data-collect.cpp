@@ -325,15 +325,28 @@ int main(int argc, char** argv) try
     rs2::context ctx( settings.dump() );
     rs2::device_list list;
 
+    constexpr int discovery_timeout_seconds = 30;
+    constexpr int device_mask = RS2_PRODUCT_LINE_ANY | RS2_PRODUCT_LINE_SW_ONLY;
+    for( int waited = 0; waited < discovery_timeout_seconds; ++waited )
+    {
+        list = ctx.query_devices( device_mask );
+        if( list.size() )
+            break;
+        if( waited == 0 )
+            std::cout << "Waiting for RealSense device (USB instant; Ethernet/DDS discovery up to "
+                      << discovery_timeout_seconds << "s)..." << std::endl;
+        std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
+    }
+    if( ! list.size() )
+        throw runtime_error( "No RealSense device found before discovery timeout" );
+
     while (!succeed)
     {
-        list = ctx.query_devices();
+        list = ctx.query_devices( device_mask );
 
-        if (0== list.size())
+        if (0 == list.size())
         {
-            std::cout << "Connect Realsense Camera to proceed" << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            continue;
+            throw runtime_error( "Device list became empty; camera disconnected?" );
         }
 
         std::shared_ptr<rs2::device> dev;

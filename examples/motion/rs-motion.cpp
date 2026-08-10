@@ -2,7 +2,9 @@
 // Copyright(c) 2019 RealSense, Inc. All Rights Reserved.
 #include <librealsense2/rs.hpp>
 #include <mutex>
+#include <iostream>
 #include "example.hpp"          // Include short list of convenience functions for rendering
+#include <common/cli.h>
 #include <cstring>
 
 struct short3
@@ -190,75 +192,76 @@ public:
     }
 };
 
-bool check_accel_gyro_are_supported()
+enum class imu_mode
 {
-    bool found_gyro = false;
-    bool found_accel = false;
-    rs2::context ctx;
-    for (auto dev : ctx.query_devices())
-    {
-        // The same device should support gyro and accel
-        found_gyro = false;
-        found_accel = false;
-        for (auto sensor : dev.query_sensors())
-        {
-            for (auto profile : sensor.get_stream_profiles())
-            {
-                if (profile.stream_type() == RS2_STREAM_GYRO)
-                    found_gyro = true;
+    none,
+    split_accel_gyro,
+    combined_motion
+};
 
-                if (profile.stream_type() == RS2_STREAM_ACCEL)
+imu_mode detect_imu_mode( rs2::device_list const & devices )
+{
+    for( auto dev : devices )
+    {
+        bool found_gyro = false;
+        bool found_accel = false;
+        bool found_combined = false;
+
+        for( auto sensor : dev.query_sensors() )
+        {
+            for( auto profile : sensor.get_stream_profiles() )
+            {
+                if( profile.stream_type() == RS2_STREAM_GYRO )
+                    found_gyro = true;
+                if( profile.stream_type() == RS2_STREAM_ACCEL )
                     found_accel = true;
+                if( profile.stream_type() == RS2_STREAM_MOTION
+                    && profile.format() == RS2_FORMAT_COMBINED_MOTION )
+                    found_combined = true;
             }
         }
-        if (found_gyro && found_accel)
-            break;
+        if( found_gyro && found_accel )
+            return imu_mode::split_accel_gyro;
+        if( found_combined )
+            return imu_mode::combined_motion;
     }
-    return found_gyro && found_accel;
+    return imu_mode::none;
 }
 
-bool check_combined_motion_is_supported()
+static rs2_vector to_rs2_vector( double x, double y, double z )
 {
-    rs2::context ctx;
-
-    for (auto dev : ctx.query_devices())
-    {
-        for (auto sensor : dev.query_sensors())
-        {
-            for (auto profile : sensor.get_stream_profiles())
-            {
-                if (profile.stream_type() == RS2_STREAM_MOTION)
-                    return true;
-            }
-        }
-    }
-
-    return false;
+    rs2_vector value;
+    value.x = static_cast< float >( x );
+    value.y = static_cast< float >( y );
+    value.z = static_cast< float >( z );
+    return value;
 }
 
 int main(int argc, char * argv[]) try
 {
-    // Declare RealSense pipeline, encapsulating the actual device and sensors
-    rs2::pipeline pipe;
-    // Create a configuration for configuring the pipeline with a non default profile
-    rs2::config cfg;
+    auto settings = rs2::cli( "rs-motion example" ).process( argc, argv );
+    rs2::context ctx( settings.dump() );
+    auto devices = wait_for_devices( ctx );
 
-    // Before running the example, check that a device supporting IMU is connected
-    if (check_accel_gyro_are_supported())
+    auto mode = detect_imu_mode( devices );
+    if( mode == imu_mode::none )
     {
-        // Add streams of gyro and accelerometer to configuration
-        cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
-        cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
+        std::cerr << "Device supporting IMU not found\n";
+        return EXIT_FAILURE;
     }
-    else if (check_combined_motion_is_supported())
+
+    rs2::pipeline pipe( ctx );
+    rs2::config cfg;
+    if( mode == imu_mode::split_accel_gyro )
     {
-        // Add combined gyro and accelerometer to configuration
-        cfg.enable_stream(RS2_STREAM_MOTION, RS2_FORMAT_COMBINED_MOTION);
+        cfg.enable_stream( RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F );
+        cfg.enable_stream( RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F );
+        std::cout << "Using split ACCEL + GYRO streams" << std::endl;
     }
     else
     {
-            std::cerr << "Device supporting IMU not found";
-            return EXIT_FAILURE;
+        cfg.enable_stream( RS2_STREAM_MOTION, RS2_FORMAT_COMBINED_MOTION );
+        std::cout << "Using combined MOTION stream (COMBINED_MOTION)" << std::endl;
     }
 
     // Initialize window for rendering
@@ -277,25 +280,33 @@ int main(int argc, char * argv[]) try
     // Note that since we only allow IMU streams, only single frames are produced
     auto profile = pipe.start(cfg, [&](rs2::frame frame)
     {
-        // Cast the frame that arrived to motion frame
         auto motion = frame.as<rs2::motion_frame>();
-        // If casting succeeded and the arrived frame is from gyro stream
-        if (motion && motion.get_profile().stream_type() == RS2_STREAM_GYRO && motion.get_profile().format() == RS2_FORMAT_MOTION_XYZ32F)
+        if( ! motion )
+            return;
+
+        auto stream = motion.get_profile().stream_type();
+        auto format = motion.get_profile().format();
+        if( stream == RS2_STREAM_GYRO && format == RS2_FORMAT_MOTION_XYZ32F )
         {
-            // Get the timestamp of the current frame
-            double ts = motion.get_timestamp();
-            // Get gyro measures
-            rs2_vector gyro_data = motion.get_motion_data();
-            // Call function that computes the angle of motion based on the retrieved measures
-            algo.process_gyro(gyro_data, ts);
+            algo.process_gyro( motion.get_motion_data(), motion.get_timestamp() );
+            return;
         }
-        // If casting succeeded and the arrived frame is from accelerometer stream
-        if (motion && motion.get_profile().stream_type() == RS2_STREAM_ACCEL && motion.get_profile().format() == RS2_FORMAT_MOTION_XYZ32F)
+        if( stream == RS2_STREAM_ACCEL && format == RS2_FORMAT_MOTION_XYZ32F )
         {
-            // Get accelerometer measures
-            rs2_vector accel_data = motion.get_motion_data();
-            // Call function that computes the angle of motion based on the retrieved measures
-            algo.process_accel(accel_data);
+            algo.process_accel( motion.get_motion_data() );
+            return;
+        }
+        if( stream == RS2_STREAM_MOTION && format == RS2_FORMAT_COMBINED_MOTION )
+        {
+            auto combined = motion.get_combined_motion_data();
+            auto gyro = to_rs2_vector( combined.angular_velocity.x,
+                                       combined.angular_velocity.y,
+                                       combined.angular_velocity.z );
+            auto accel = to_rs2_vector( combined.linear_acceleration.x,
+                                        combined.linear_acceleration.y,
+                                        combined.linear_acceleration.z );
+            algo.process_gyro( gyro, motion.get_timestamp() );
+            algo.process_accel( accel );
         }
     });
 
